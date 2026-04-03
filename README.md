@@ -33,6 +33,33 @@ npm run dev -w @queuview/api
 npm run dev -w @queuview/web
 ```
 
+## Run Commands
+
+Local development:
+
+```bash
+# API
+npm run dev -w @queuview/api
+
+# Web
+npm run dev -w @queuview/web
+```
+
+Production (from repository root):
+
+```bash
+# Build all packages
+npm run build
+
+# Start API
+npm run start -w @queuview/api
+
+# Optional post-deploy verification
+npm run smoke
+```
+
+For a complete launch/deploy checklist, see [docs/launch-readiness.md](docs/launch-readiness.md).
+
 ## CI Quality Gates
 
 CI runs these checks on every push and pull request:
