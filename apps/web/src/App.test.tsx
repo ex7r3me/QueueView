@@ -2,23 +2,6 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 
-interface QueueEntry {
-  id: string;
-  displayName: string;
-  joinedAt: string;
-  updatedAt: string;
-  state: "waiting" | "called" | "completed" | "cancelled";
-}
-
-interface Session {
-  id: string;
-  hostName: string;
-  state: "open" | "paused" | "closed";
-  createdAt: string;
-  updatedAt: string;
-  queue: QueueEntry[];
-}
-
 function asJsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
@@ -29,19 +12,107 @@ function asJsonResponse(payload: unknown, status = 200): Response {
 }
 
 describe("App", () => {
-  const now = "2026-04-02T10:00:00.000Z";
-  let session: Session;
+  const now = "2026-04-03T10:00:00.000Z";
+  const snapshotPayload = {
+    enabled: true,
+    updatedAt: now,
+    queues: [
+      {
+        name: "notifications",
+        settings: {
+          concurrency: 4,
+          enqueueEveryMs: 500,
+          processingMsMin: 100,
+          processingMsMax: 600,
+          failureRate: 0.1,
+          maxRetries: 2,
+          retryDelayMsMin: 200,
+          retryDelayMsMax: 800
+        },
+        stats: {
+          waiting: 2,
+          active: 1,
+          completed: 4,
+          failed: 0,
+          retryScheduled: 1,
+          retried: 2,
+          totalCreated: 8,
+          totalProcessed: 6
+        },
+        recentJobs: [
+          {
+            id: "job-1",
+            state: "active",
+            attempts: 1,
+            maxAttempts: 2,
+            createdAt: now,
+            startedAt: now,
+            finishedAt: null,
+            lastError: null
+          }
+        ]
+      }
+    ]
+  };
+  const detailPayload = {
+    enabled: true,
+    updatedAt: now,
+    queue: snapshotPayload.queues[0],
+    jobs: {
+      latest: [
+        {
+          id: "job-1",
+          state: "active",
+          attempts: 1,
+          maxAttempts: 2,
+          createdAt: now,
+          startedAt: now,
+          finishedAt: null,
+          lastError: null
+        },
+        {
+          id: "job-2",
+          state: "completed",
+          attempts: 1,
+          maxAttempts: 2,
+          createdAt: now,
+          startedAt: now,
+          finishedAt: now,
+          lastError: null
+        }
+      ],
+      waiting: [],
+      active: [
+        {
+          id: "job-1",
+          state: "active",
+          attempts: 1,
+          maxAttempts: 2,
+          createdAt: now,
+          startedAt: now,
+          finishedAt: null,
+          lastError: null
+        }
+      ],
+      retryScheduled: [],
+      completed: [
+        {
+          id: "job-2",
+          state: "completed",
+          attempts: 1,
+          maxAttempts: 2,
+          createdAt: now,
+          startedAt: now,
+          finishedAt: now,
+          lastError: null
+        }
+      ],
+      failed: []
+    }
+  };
 
   beforeEach(() => {
-    session = {
-      id: "session-1",
-      hostName: "Host One",
-      state: "open",
-      createdAt: now,
-      updatedAt: now,
-      queue: []
-    };
-
+    window.location.hash = "#/";
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url =
         typeof input === "string"
@@ -51,70 +122,12 @@ describe("App", () => {
             : input.url;
       const method = init?.method ?? "GET";
 
-      if (url.endsWith("/sessions") && method === "GET") {
-        return asJsonResponse({
-          sessions: [
-            {
-              id: session.id,
-              hostName: session.hostName,
-              state: session.state,
-              queueSize: session.queue.length
-            }
-          ]
-        });
+      if (url.endsWith("/demo/queues") && method === "GET") {
+        return asJsonResponse(snapshotPayload);
       }
 
-      if (url.endsWith("/sessions") && method === "POST") {
-        session = {
-          ...session,
-          hostName: JSON.parse(String(init?.body)).hostName
-        };
-        return asJsonResponse({ session }, 201);
-      }
-
-      if (url.endsWith(`/sessions/${session.id}`) && method === "GET") {
-        return asJsonResponse({ session });
-      }
-
-      if (url.endsWith(`/sessions/${session.id}`) && method === "PATCH") {
-        session = {
-          ...session,
-          state: JSON.parse(String(init?.body)).state
-        };
-        return asJsonResponse({ session });
-      }
-
-      if (url.endsWith(`/sessions/${session.id}/queue`) && method === "POST") {
-        const payload = JSON.parse(String(init?.body)) as { displayName: string };
-        const queueEntry: QueueEntry = {
-          id: "entry-1",
-          displayName: payload.displayName,
-          state: "waiting",
-          joinedAt: now,
-          updatedAt: now
-        };
-        session = {
-          ...session,
-          queue: [...session.queue, queueEntry]
-        };
-        return asJsonResponse({ queueEntry }, 201);
-      }
-
-      if (url.endsWith(`/sessions/${session.id}/queue/entry-1`) && method === "PATCH") {
-        const payload = JSON.parse(String(init?.body)) as { state: QueueEntry["state"] };
-        session = {
-          ...session,
-          queue: session.queue.map((entry) =>
-            entry.id === "entry-1"
-              ? {
-                  ...entry,
-                  state: payload.state,
-                  updatedAt: now
-                }
-              : entry
-          )
-        };
-        return asJsonResponse({ queueEntry: session.queue[0] });
+      if (url.endsWith("/demo/queues/notifications") && method === "GET") {
+        return asJsonResponse(detailPayload);
       }
 
       return asJsonResponse({ error: `Unhandled ${method} ${url}` }, 500);
@@ -123,68 +136,54 @@ describe("App", () => {
 
   afterEach(() => {
     cleanup();
+    window.location.hash = "#/";
     vi.restoreAllMocks();
   });
 
-  it("creates a session from host console", async () => {
+  it("renders queue overview and recent jobs", async () => {
     render(<App />);
 
-    fireEvent.change(screen.getByLabelText("Host display name"), {
-      target: { value: "Support Lead" }
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Create queue" }));
-
     await waitFor(() => {
-      expect(screen.getByText("Session session-1 created")).toBeInTheDocument();
+      expect(screen.getByText("Live Queue Monitor")).toBeInTheDocument();
+      expect(screen.getByText("notifications")).toBeInTheDocument();
     });
 
-    expect(screen.getAllByText("session-1", { exact: false }).length).toBeGreaterThan(0);
+    expect(screen.getByText("waiting: 2")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open queue" })).toBeInTheDocument();
   });
 
-  it("joins queue from participant view and shows status", async () => {
+  it("supports manual refresh", async () => {
     render(<App />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Participant View" }));
-    fireEvent.change(screen.getByLabelText("Session ID"), {
-      target: { value: "session-1" }
+    await waitFor(() => {
+      expect(screen.getByText("notifications")).toBeInTheDocument();
     });
-    fireEvent.change(screen.getByLabelText("Display name"), {
-      target: { value: "Taylor" }
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Join queue" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh now" }));
 
     await waitFor(() => {
-      expect(screen.getByText("Joined queue successfully")).toBeInTheDocument();
+      expect(globalThis.fetch).toHaveBeenCalledTimes(2);
     });
-
-    expect(screen.getByText("Your status:", { exact: false })).toBeInTheDocument();
-    expect(screen.getByText("waiting", { exact: false })).toBeInTheDocument();
   });
 
-  it("calls next waiting participant from host controls", async () => {
-    session.queue = [
-      {
-        id: "entry-1",
-        displayName: "Taylor",
-        state: "waiting",
-        joinedAt: now,
-        updatedAt: now
-      }
-    ];
-
+  it("opens a queue details page with status tabs", async () => {
     render(<App />);
 
-    const sessionButton = await screen.findByRole("button", { name: /Host One.*in queue/ });
-    fireEvent.click(sessionButton);
-
     await waitFor(() => {
-      expect(screen.getByText("Waiting:", { exact: false })).toBeInTheDocument();
+      expect(screen.getByText("notifications")).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Call next waiting" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open queue" }));
 
     await waitFor(() => {
-      expect(screen.getByText("Queue entry moved to called")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Back to all queues" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Latest \(2\)/ })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Completed \(1\)/ }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/job-2/i)).toBeInTheDocument();
     });
   });
 });

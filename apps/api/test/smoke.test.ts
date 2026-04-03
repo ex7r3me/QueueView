@@ -6,39 +6,25 @@ describe("api smoke flow", () => {
     await app.close();
   });
 
-  it("passes health -> create session -> join queue -> call participant", async () => {
+  it("passes health -> demo queue snapshot", async () => {
     const health = await app.inject({
       method: "GET",
       url: "/health"
     });
     expect(health.statusCode).toBe(200);
 
-    const createSession = await app.inject({
-      method: "POST",
-      url: "/sessions",
-      payload: { hostName: "Launch Host" }
+    const demoQueues = await app.inject({
+      method: "GET",
+      url: "/demo/queues"
     });
-    expect(createSession.statusCode).toBe(201);
+    expect(demoQueues.statusCode).toBe(200);
 
-    const sessionId = createSession.json().session.id as string;
-    expect(sessionId).toBeTruthy();
-
-    const joinQueue = await app.inject({
-      method: "POST",
-      url: `/sessions/${sessionId}/queue`,
-      payload: { displayName: "Smoke Participant" }
-    });
-    expect(joinQueue.statusCode).toBe(201);
-
-    const queueEntryId = joinQueue.json().queueEntry.id as string;
-    expect(queueEntryId).toBeTruthy();
-
-    const callParticipant = await app.inject({
-      method: "PATCH",
-      url: `/sessions/${sessionId}/queue/${queueEntryId}`,
-      payload: { state: "called" }
-    });
-    expect(callParticipant.statusCode).toBe(200);
-    expect(callParticipant.json().queueEntry.state).toBe("called");
+    const payload = demoQueues.json() as {
+      enabled: boolean;
+      queues: Array<{ name: string }>;
+    };
+    expect(payload.enabled).toBe(true);
+    expect(payload.queues.length).toBeGreaterThan(0);
+    expect(payload.queues.every((queue) => typeof queue.name === "string")).toBe(true);
   });
 });

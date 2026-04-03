@@ -43,23 +43,19 @@ Use rollback immediately when smoke checks fail after deploy or error rate spike
 Current instrumentation for launch:
 
 - HTTP request logs via Fastify logger.
-- Domain event logs for:
-  - `session.created`
-  - `session.state.updated`
-  - `queue.entry.joined`
-  - `queue.entry.state.updated`
+- Demo queue metrics surfaced via `GET /demo/queues`.
 - Health endpoint: `GET /health`.
 
 Minimum launch dashboards/alerts:
 
 - API availability from `/health`.
 - 4xx/5xx rate.
-- Session creation rate.
-- Queue transition failure rate (409 responses).
+- Demo queue runner enabled/disabled status.
+- Queue failure/retry trends from `/demo/queues`.
 
 ## 5. Post-Launch Feedback Loop (First 7 Days)
 
-1. Daily triage of user issues and queue/session failures.
+1. Daily triage of user issues and queue visibility failures.
 2. Summarize top 3 friction points from support and logs.
 3. Convert each friction point into a scoped issue with owner + ETA.
 4. Ship at least one high-impact fix per day during week one.

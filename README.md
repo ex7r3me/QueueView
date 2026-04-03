@@ -21,16 +21,17 @@ Launch execution details are in [docs/launch-readiness.md](docs/launch-readiness
 npm install
 ```
 
-3. Start API:
+3. Start full local dev environment (API + web, both with auto reloading):
 
 ```bash
-npm run dev -w @queuview/api
+npm run dev
 ```
 
-4. Start Web:
+4. Optional: start individual apps:
 
 ```bash
-npm run dev -w @queuview/web
+npm run dev:api
+npm run dev:web
 ```
 
 ## Run Commands
@@ -38,11 +39,14 @@ npm run dev -w @queuview/web
 Local development:
 
 ```bash
-# API
-npm run dev -w @queuview/api
+# API + web in one command (watch mode)
+npm run dev
 
-# Web
-npm run dev -w @queuview/web
+# API only (watch mode)
+npm run dev:api
+
+# Web only (watch mode)
+npm run dev:web
 ```
 
 Production (from repository root):

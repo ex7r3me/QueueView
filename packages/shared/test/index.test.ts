@@ -1,16 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_QUEUE_LIMIT, type QueueEntryState, type SessionState } from "../src/index";
+import { DEFAULT_QUEUE_LIMIT, type QueueEntryState } from "../src/index";
 
 describe("shared constants", () => {
   it("exposes default queue limit", () => {
     expect(DEFAULT_QUEUE_LIMIT).toBe(250);
   });
 
-  it("exposes session and queue states", () => {
-    const sessionState: SessionState = "open";
+  it("exposes queue states", () => {
     const queueState: QueueEntryState = "waiting";
 
-    expect(sessionState).toBe("open");
     expect(queueState).toBe("waiting");
   });
 });

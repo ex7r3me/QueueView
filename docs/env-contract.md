@@ -5,9 +5,7 @@
 - `PORT`: API listen port (`3000` default)
 - `HOST`: API listen host (`0.0.0.0` default)
 - `CORS_ORIGIN`: Web origin allowed by CORS (`http://localhost:5173` default)
-- `SESSION_IDLE_TIMEOUT_MS`: Milliseconds before idle session timeout (`300000` default)
-- `QUEUE_MAX_PARTICIPANTS`: Max queue entries allowed per session (`250` default)
-- `SESSION_STORE_FILE`: Optional JSON file path for persisted session/queue state (unset = in-memory only)
+- `DEMO_JOB_RUNNERS`: Enable demo job runners and `/demo/queues` board (`true` by default outside production)
 
 ## Policy
 

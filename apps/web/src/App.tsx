@@ -1,37 +1,70 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { QueueEntryState, SessionState } from "@queuview/shared";
-
-type ViewMode = "host" | "participant";
-
-interface SessionSummary {
-  id: string;
-  hostName: string;
-  state: SessionState;
-  queueSize: number;
-}
-
-interface QueueEntry {
-  id: string;
-  displayName: string;
-  joinedAt: string;
-  updatedAt: string;
-  state: QueueEntryState;
-}
-
-interface SessionDetail {
-  id: string;
-  hostName: string;
-  state: SessionState;
-  createdAt: string;
-  updatedAt: string;
-  queue: QueueEntry[];
-}
 
 interface ApiError {
   error?: string;
 }
 
+type DemoJobState = "waiting" | "active" | "completed" | "failed" | "retry_scheduled";
+type QueueJobTab = "latest" | "active" | "completed" | "failed" | "waiting" | "retryScheduled";
+
+interface DemoQueueSnapshot {
+  enabled: boolean;
+  updatedAt: string;
+  queues: DemoQueueView[];
+}
+
+interface DemoQueueView {
+  name: string;
+  settings: {
+    concurrency: number;
+    enqueueEveryMs: number;
+    processingMsMin: number;
+    processingMsMax: number;
+    failureRate: number;
+    maxRetries: number;
+    retryDelayMsMin: number;
+    retryDelayMsMax: number;
+  };
+  stats: {
+    waiting: number;
+    active: number;
+    completed: number;
+    failed: number;
+    retryScheduled: number;
+    retried: number;
+    totalCreated: number;
+    totalProcessed: number;
+  };
+  recentJobs: DemoQueueJob[];
+}
+
+interface DemoQueueDetail {
+  enabled: boolean;
+  updatedAt: string;
+  queue: DemoQueueView;
+  jobs: {
+    latest: DemoQueueJob[];
+    waiting: DemoQueueJob[];
+    active: DemoQueueJob[];
+    retryScheduled: DemoQueueJob[];
+    completed: DemoQueueJob[];
+    failed: DemoQueueJob[];
+  };
+}
+
+interface DemoQueueJob {
+  id: string;
+  state: DemoJobState;
+  attempts: number;
+  maxAttempts: number;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  lastError: string | null;
+}
+
 const REFRESH_INTERVAL_MS = 5000;
+const QUEUE_HASH_PREFIX = "#/queues/";
 
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:3000";
@@ -45,6 +78,7 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     let message = `Request failed (${response.status})`;
+
     try {
       const payload = (await response.json()) as ApiError;
       if (payload.error) {
@@ -67,383 +101,300 @@ function formatTimestamp(iso: string): string {
   });
 }
 
+function formatPercent(value: number): string {
+  return `${Math.round(value * 100)}%`;
+}
+
+function queueNameFromHash(hash: string): string | null {
+  if (!hash.startsWith(QUEUE_HASH_PREFIX)) {
+    return null;
+  }
+
+  const encodedQueueName = hash.slice(QUEUE_HASH_PREFIX.length).trim();
+  if (!encodedQueueName) {
+    return null;
+  }
+
+  return decodeURIComponent(encodedQueueName);
+}
+
+function queueHash(queueName: string): string {
+  return `${QUEUE_HASH_PREFIX}${encodeURIComponent(queueName)}`;
+}
+
 export function App() {
-  const [mode, setMode] = useState<ViewMode>("host");
+  const [snapshot, setSnapshot] = useState<DemoQueueSnapshot | null>(null);
+  const [queueDetail, setQueueDetail] = useState<DemoQueueDetail | null>(null);
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
+  const [activeTab, setActiveTab] = useState<QueueJobTab>("latest");
+  const [selectedQueueName, setSelectedQueueName] = useState<string | null>(() =>
+    queueNameFromHash(window.location.hash)
+  );
 
-  const [hostName, setHostName] = useState("");
-  const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [selectedSessionId, setSelectedSessionId] = useState("");
-  const [hostSession, setHostSession] = useState<SessionDetail | null>(null);
-
-  const [participantSessionId, setParticipantSessionId] = useState("");
-  const [participantName, setParticipantName] = useState("");
-  const [participantEntryId, setParticipantEntryId] = useState("");
-  const [participantSession, setParticipantSession] = useState<SessionDetail | null>(null);
-
-  const reportError = useCallback((value: unknown) => {
-    const nextError = value instanceof Error ? value.message : "Something went wrong";
-    setError(nextError);
-    setMessage("");
-  }, []);
-
-  const reportSuccess = useCallback((value: string) => {
-    setMessage(value);
-    setError("");
-  }, []);
-
-  const loadSessions = useCallback(async () => {
+  const loadDemoQueues = useCallback(async () => {
     try {
-      const payload = await apiRequest<{ sessions: SessionSummary[] }>("/sessions");
-      setSessions(payload.sessions);
+      const payload = await apiRequest<DemoQueueSnapshot>("/demo/queues");
+      setSnapshot(payload);
+
+      if (selectedQueueName) {
+        const detail = await apiRequest<DemoQueueDetail>(
+          `/demo/queues/${encodeURIComponent(selectedQueueName)}`
+        );
+        setQueueDetail(detail);
+      } else {
+        setQueueDetail(null);
+      }
+
+      setError("");
     } catch (loadError) {
-      reportError(loadError);
+      setError(loadError instanceof Error ? loadError.message : "Unable to load queue snapshot");
     }
-  }, [reportError]);
-
-  const loadHostSession = useCallback(
-    async (sessionId: string) => {
-      if (!sessionId) {
-        setHostSession(null);
-        return;
-      }
-
-      try {
-        const payload = await apiRequest<{ session: SessionDetail }>(`/sessions/${sessionId}`);
-        setHostSession(payload.session);
-      } catch (loadError) {
-        reportError(loadError);
-      }
-    },
-    [reportError]
-  );
-
-  const loadParticipantSession = useCallback(
-    async (sessionId: string) => {
-      if (!sessionId) {
-        setParticipantSession(null);
-        return;
-      }
-
-      try {
-        const payload = await apiRequest<{ session: SessionDetail }>(`/sessions/${sessionId}`);
-        setParticipantSession(payload.session);
-      } catch (loadError) {
-        reportError(loadError);
-      }
-    },
-    [reportError]
-  );
+  }, [selectedQueueName]);
 
   useEffect(() => {
-    void loadSessions();
-  }, [loadSessions]);
+    void loadDemoQueues();
+  }, [loadDemoQueues]);
 
   useEffect(() => {
-    if (!selectedSessionId && !participantSessionId) {
-      return;
-    }
-
     const interval = window.setInterval(() => {
-      if (selectedSessionId) {
-        void loadHostSession(selectedSessionId);
-      }
-      if (participantSessionId) {
-        void loadParticipantSession(participantSessionId);
-      }
+      void loadDemoQueues();
     }, REFRESH_INTERVAL_MS);
 
     return () => {
       window.clearInterval(interval);
     };
-  }, [loadHostSession, loadParticipantSession, participantSessionId, selectedSessionId]);
+  }, [loadDemoQueues]);
 
-  const waitingCount = useMemo(
-    () => hostSession?.queue.filter((entry) => entry.state === "waiting").length ?? 0,
-    [hostSession]
+  useEffect(() => {
+    const onHashChange = () => {
+      setSelectedQueueName(queueNameFromHash(window.location.hash));
+    };
+
+    window.addEventListener("hashchange", onHashChange);
+    return () => {
+      window.removeEventListener("hashchange", onHashChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    setActiveTab("latest");
+  }, [selectedQueueName]);
+
+  const totalWaiting = useMemo(
+    () => snapshot?.queues.reduce((sum, queue) => sum + queue.stats.waiting, 0) ?? 0,
+    [snapshot]
   );
 
-  const calledCount = useMemo(
-    () => hostSession?.queue.filter((entry) => entry.state === "called").length ?? 0,
-    [hostSession]
+  const totalActive = useMemo(
+    () => snapshot?.queues.reduce((sum, queue) => sum + queue.stats.active, 0) ?? 0,
+    [snapshot]
   );
 
-  const participantEntry = useMemo(
-    () => participantSession?.queue.find((entry) => entry.id === participantEntryId) ?? null,
-    [participantEntryId, participantSession]
+  const totalFailed = useMemo(
+    () => snapshot?.queues.reduce((sum, queue) => sum + queue.stats.failed, 0) ?? 0,
+    [snapshot]
   );
 
-  async function createSession(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    try {
-      const payload = await apiRequest<{ session: SessionDetail }>("/sessions", {
-        method: "POST",
-        body: JSON.stringify({ hostName })
-      });
-
-      setHostName("");
-      setSelectedSessionId(payload.session.id);
-      setHostSession(payload.session);
-      await loadSessions();
-      reportSuccess(`Session ${payload.session.id} created`);
-    } catch (createError) {
-      reportError(createError);
-    }
-  }
-
-  async function selectSession(sessionId: string) {
-    setSelectedSessionId(sessionId);
-    await loadHostSession(sessionId);
-  }
-
-  async function updateSessionState(nextState: SessionState) {
-    if (!hostSession) {
-      return;
-    }
-
-    try {
-      const payload = await apiRequest<{ session: SessionDetail }>(`/sessions/${hostSession.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ state: nextState })
-      });
-
-      setHostSession(payload.session);
-      await loadSessions();
-      reportSuccess(`Session moved to ${nextState}`);
-    } catch (updateError) {
-      reportError(updateError);
-    }
-  }
-
-  async function updateQueueEntryState(queueEntryId: string, state: QueueEntryState) {
-    if (!hostSession) {
-      return;
-    }
-
-    try {
-      await apiRequest<{ queueEntry: QueueEntry }>(`/sessions/${hostSession.id}/queue/${queueEntryId}`, {
-        method: "PATCH",
-        body: JSON.stringify({ state })
-      });
-
-      await loadHostSession(hostSession.id);
-      reportSuccess(`Queue entry moved to ${state}`);
-    } catch (updateError) {
-      reportError(updateError);
-    }
-  }
-
-  async function callNextParticipant() {
-    const nextWaiting = hostSession?.queue.find((entry) => entry.state === "waiting");
-    if (!nextWaiting) {
-      reportError(new Error("No waiting participants"));
-      return;
-    }
-
-    await updateQueueEntryState(nextWaiting.id, "called");
-  }
-
-  async function joinQueue(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    try {
-      const payload = await apiRequest<{ queueEntry: QueueEntry }>(
-        `/sessions/${participantSessionId}/queue`,
-        {
-          method: "POST",
-          body: JSON.stringify({ displayName: participantName })
-        }
-      );
-
-      setParticipantEntryId(payload.queueEntry.id);
-      setParticipantName("");
-      await loadParticipantSession(participantSessionId);
-      reportSuccess("Joined queue successfully");
-    } catch (joinError) {
-      reportError(joinError);
-    }
-  }
-
-  async function refreshParticipantView() {
-    await loadParticipantSession(participantSessionId);
-  }
+  const activeJobs = queueDetail
+    ? {
+        latest: queueDetail.jobs.latest,
+        active: queueDetail.jobs.active,
+        completed: queueDetail.jobs.completed,
+        failed: queueDetail.jobs.failed,
+        waiting: queueDetail.jobs.waiting,
+        retryScheduled: queueDetail.jobs.retryScheduled
+      }[activeTab]
+    : [];
 
   return (
     <main className="app-shell">
       <header className="hero">
-        <p className="eyebrow">Queuview MVP</p>
-        <h1>Live Queue Control</h1>
-        <p className="subtitle">Hosts manage flow. Participants track their position in real time.</p>
+        <p className="eyebrow">QueueView</p>
+        <h1>Live Queue Monitor</h1>
+        <p className="subtitle">Single-pane, bullboard-style visibility for active job runners.</p>
       </header>
-
-      <section className="mode-switch" aria-label="View mode">
-        <button
-          type="button"
-          className={mode === "host" ? "mode-pill active" : "mode-pill"}
-          onClick={() => setMode("host")}
-        >
-          Host Console
-        </button>
-        <button
-          type="button"
-          className={mode === "participant" ? "mode-pill active" : "mode-pill"}
-          onClick={() => setMode("participant")}
-        >
-          Participant View
-        </button>
-      </section>
 
       {error ? (
         <p role="alert" className="banner error">
           {error}
         </p>
       ) : null}
-      {message ? <p className="banner success">{message}</p> : null}
 
-      {mode === "host" ? (
-        <section className="panel-grid">
-          <article className="panel">
-            <h2>Create session</h2>
-            <form className="stack" onSubmit={createSession}>
-              <label htmlFor="host-name">Host display name</label>
-              <input
-                id="host-name"
-                value={hostName}
-                onChange={(event) => setHostName(event.target.value)}
-                placeholder="Alex from support"
-              />
-              <button type="submit">Create queue</button>
-            </form>
-          </article>
+      <section className="panel summary-panel">
+        <div>
+          <h2>Overview</h2>
+          <p className="summary-copy">Auto-refresh every 5 seconds.</p>
+        </div>
+        <button type="button" className="ghost" onClick={() => void loadDemoQueues()}>
+          Refresh now
+        </button>
+        {snapshot ? (
+          <div className="overview-grid">
+            <article>
+              <p className="kpi-label">Queues</p>
+              <p className="kpi-value">{snapshot.queues.length}</p>
+            </article>
+            <article>
+              <p className="kpi-label">Waiting</p>
+              <p className="kpi-value">{totalWaiting}</p>
+            </article>
+            <article>
+              <p className="kpi-label">Active</p>
+              <p className="kpi-value">{totalActive}</p>
+            </article>
+            <article>
+              <p className="kpi-label">Failed</p>
+              <p className="kpi-value">{totalFailed}</p>
+            </article>
+            <article>
+              <p className="kpi-label">Updated</p>
+              <p className="kpi-value small">{formatTimestamp(snapshot.updatedAt)}</p>
+            </article>
+          </div>
+        ) : (
+          <p>Loading queue snapshot...</p>
+        )}
+      </section>
 
-          <article className="panel">
-            <div className="panel-header">
-              <h2>Sessions</h2>
-              <button type="button" className="ghost" onClick={() => void loadSessions()}>
-                Refresh
+      {snapshot && !snapshot.enabled ? (
+        <section className="panel">
+          <p>Demo queues are disabled. Set `DEMO_JOB_RUNNERS=true` to enable `/demo/queues`.</p>
+        </section>
+      ) : null}
+
+      {snapshot?.enabled && !selectedQueueName ? (
+        <section className="queue-board">
+          {snapshot.queues.map((queue) => (
+            <article key={queue.name} className="panel queue-card">
+              <div className="panel-header">
+                <h2>{queue.name}</h2>
+                <span className="pill">c{queue.settings.concurrency}</span>
+              </div>
+              <p className="queue-meta">
+                every {queue.settings.enqueueEveryMs}ms | proc {queue.settings.processingMsMin}-
+                {queue.settings.processingMsMax}ms | fail {formatPercent(queue.settings.failureRate)} | retries{" "}
+                {queue.settings.maxRetries}
+              </p>
+
+              <div className="stats-grid">
+                <p>waiting: {queue.stats.waiting}</p>
+                <p>active: {queue.stats.active}</p>
+                <p>retry: {queue.stats.retryScheduled}</p>
+                <p>done: {queue.stats.completed}</p>
+                <p>failed: {queue.stats.failed}</p>
+                <p>processed: {queue.stats.totalProcessed}</p>
+              </div>
+
+              <button type="button" className="ghost queue-nav" onClick={() => (window.location.hash = queueHash(queue.name))}>
+                Open queue
               </button>
-            </div>
-            {sessions.length === 0 ? <p>No sessions yet.</p> : null}
-            <ul className="session-list">
-              {sessions.map((session) => (
-                <li key={session.id}>
-                  <button
-                    type="button"
-                    className={selectedSessionId === session.id ? "session-item selected" : "session-item"}
-                    onClick={() => void selectSession(session.id)}
-                  >
-                    <span>{session.hostName}</span>
-                    <span>{session.state}</span>
-                    <span>{session.queueSize} in queue</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </article>
+            </article>
+          ))}
+        </section>
+      ) : null}
 
-          <article className="panel wide">
-            <h2>Live queue controls</h2>
-            {!hostSession ? <p>Select a session to manage it.</p> : null}
-            {hostSession ? (
-              <>
-                <p>
-                  Session <strong>{hostSession.id}</strong> | state: <strong>{hostSession.state}</strong>
-                </p>
-                <div className="inline-actions">
-                  <button type="button" onClick={() => void updateSessionState("open")}>
-                    Open
-                  </button>
-                  <button type="button" onClick={() => void updateSessionState("paused")}>
-                    Pause
-                  </button>
-                  <button type="button" onClick={() => void updateSessionState("closed")}>
-                    Close
-                  </button>
-                  <button type="button" className="accent" onClick={() => void callNextParticipant()}>
-                    Call next waiting
-                  </button>
-                </div>
+      {snapshot?.enabled && selectedQueueName ? (
+        <section className="panel queue-detail">
+          <div className="detail-header">
+            <button type="button" className="ghost" onClick={() => (window.location.hash = "#/")}>
+              Back to all queues
+            </button>
+            {queueDetail ? <p className="queue-meta">Updated {formatTimestamp(queueDetail.updatedAt)}</p> : null}
+          </div>
 
-                <p>
-                  Waiting: <strong>{waitingCount}</strong> | Called: <strong>{calledCount}</strong> | Total:{" "}
-                  <strong>{hostSession.queue.length}</strong>
-                </p>
+          {queueDetail ? (
+            <>
+              <div className="panel-header">
+                <h2>{queueDetail.queue.name}</h2>
+                <span className="pill">c{queueDetail.queue.settings.concurrency}</span>
+              </div>
+              <p className="queue-meta">
+                every {queueDetail.queue.settings.enqueueEveryMs}ms | proc{" "}
+                {queueDetail.queue.settings.processingMsMin}-{queueDetail.queue.settings.processingMsMax}ms | fail{" "}
+                {formatPercent(queueDetail.queue.settings.failureRate)} | retries{" "}
+                {queueDetail.queue.settings.maxRetries}
+              </p>
 
-                <ul className="queue-list">
-                  {hostSession.queue.map((entry) => (
-                    <li key={entry.id} className="queue-item">
-                      <div>
-                        <p className="queue-name">{entry.displayName}</p>
-                        <p className="queue-meta">
-                          {entry.state} | joined {formatTimestamp(entry.joinedAt)}
-                        </p>
-                      </div>
-                      <div className="mini-actions">
-                        <button type="button" onClick={() => void updateQueueEntryState(entry.id, "called")}>Call</button>
-                        <button type="button" onClick={() => void updateQueueEntryState(entry.id, "completed")}>Complete</button>
-                        <button type="button" onClick={() => void updateQueueEntryState(entry.id, "cancelled")}>Cancel</button>
-                      </div>
+              <div className="stats-grid detail-stats">
+                <p>waiting: {queueDetail.queue.stats.waiting}</p>
+                <p>active: {queueDetail.queue.stats.active}</p>
+                <p>retry: {queueDetail.queue.stats.retryScheduled}</p>
+                <p>done: {queueDetail.queue.stats.completed}</p>
+                <p>failed: {queueDetail.queue.stats.failed}</p>
+                <p>processed: {queueDetail.queue.stats.totalProcessed}</p>
+              </div>
+
+              <nav className="tabs" aria-label="Queue job tabs">
+                <button
+                  type="button"
+                  className={activeTab === "latest" ? "tab active" : "tab"}
+                  onClick={() => setActiveTab("latest")}
+                >
+                  Latest ({queueDetail.jobs.latest.length})
+                </button>
+                <button
+                  type="button"
+                  className={activeTab === "active" ? "tab active" : "tab"}
+                  onClick={() => setActiveTab("active")}
+                >
+                  Active ({queueDetail.jobs.active.length})
+                </button>
+                <button
+                  type="button"
+                  className={activeTab === "completed" ? "tab active" : "tab"}
+                  onClick={() => setActiveTab("completed")}
+                >
+                  Completed ({queueDetail.jobs.completed.length})
+                </button>
+                <button
+                  type="button"
+                  className={activeTab === "failed" ? "tab active" : "tab"}
+                  onClick={() => setActiveTab("failed")}
+                >
+                  Failed ({queueDetail.jobs.failed.length})
+                </button>
+                <button
+                  type="button"
+                  className={activeTab === "waiting" ? "tab active" : "tab"}
+                  onClick={() => setActiveTab("waiting")}
+                >
+                  Waiting ({queueDetail.jobs.waiting.length})
+                </button>
+                <button
+                  type="button"
+                  className={activeTab === "retryScheduled" ? "tab active" : "tab"}
+                  onClick={() => setActiveTab("retryScheduled")}
+                >
+                  Retry ({queueDetail.jobs.retryScheduled.length})
+                </button>
+              </nav>
+
+              <h3>Jobs</h3>
+              {activeJobs.length === 0 ? (
+                <p className="queue-meta">No jobs in this category yet.</p>
+              ) : (
+                <ul className="job-list detail-job-list">
+                  {activeJobs.map((job) => (
+                    <li key={job.id} className="job-item">
+                      <p>
+                        {job.id} <strong>{job.state}</strong> ({job.attempts}/{job.maxAttempts})
+                      </p>
+                      <p className="queue-meta">
+                        created {formatTimestamp(job.createdAt)}
+                        {job.startedAt ? ` | started ${formatTimestamp(job.startedAt)}` : ""}
+                        {job.finishedAt ? ` | finished ${formatTimestamp(job.finishedAt)}` : ""}
+                      </p>
+                      {job.lastError ? <p className="error-inline">{job.lastError}</p> : null}
                     </li>
                   ))}
                 </ul>
-              </>
-            ) : null}
-          </article>
+              )}
+            </>
+          ) : (
+            <p>Loading queue details...</p>
+          )}
         </section>
-      ) : (
-        <section className="panel-grid">
-          <article className="panel">
-            <h2>Join a queue</h2>
-            <form className="stack" onSubmit={joinQueue}>
-              <label htmlFor="session-id">Session ID</label>
-              <input
-                id="session-id"
-                value={participantSessionId}
-                onChange={(event) => setParticipantSessionId(event.target.value)}
-                placeholder="Paste session id"
-              />
-              <label htmlFor="participant-name">Display name</label>
-              <input
-                id="participant-name"
-                value={participantName}
-                onChange={(event) => setParticipantName(event.target.value)}
-                placeholder="Taylor"
-              />
-              <button type="submit">Join queue</button>
-            </form>
-          </article>
-
-          <article className="panel wide">
-            <div className="panel-header">
-              <h2>Live status</h2>
-              <button type="button" className="ghost" onClick={() => void refreshParticipantView()}>
-                Refresh now
-              </button>
-            </div>
-
-            {!participantSession ? <p>Join or refresh a session to view your status.</p> : null}
-            {participantSession ? (
-              <>
-                <p>
-                  Session {participantSession.id} is <strong>{participantSession.state}</strong>
-                </p>
-                <p>
-                  Queue length: <strong>{participantSession.queue.length}</strong>
-                </p>
-                {participantEntry ? (
-                  <p>
-                    Your status: <strong>{participantEntry.state}</strong>
-                  </p>
-                ) : (
-                  <p>Your queue entry is not visible yet. It may have been removed.</p>
-                )}
-              </>
-            ) : null}
-          </article>
-        </section>
-      )}
+      ) : null}
     </main>
   );
 }
